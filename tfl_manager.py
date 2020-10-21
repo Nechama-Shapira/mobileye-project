@@ -1,100 +1,80 @@
-from part2 import get_model, get_label
-from part_2 import create_image_with_border
-from SFM_standAlone import run_sfm
-from run_attention import find_tfl_lights
-import numpy as np
-from PIL import Image, ImageOps
 import matplotlib.pyplot as plt
+from tensorflow.keras.models import load_model
+import numpy as np
+
+from frame_container import FrameContainer
+from tfl_attention import find_tfl_lights
+from confirm_tfl_use_CNN import confirm_tfl_by_CNN
+import sfm as SFM
 
 
-def is_tfl(model, image: Image) -> bool:
-    # print(np.array(image).shape)
-    if np.array(image).shape != (81, 81, 3):
-        return False
-    if get_label(model, image) > 0.5:
-        return True
-    return False
+#========================Auxiliary Function===========================
+
+def get_model():
+    model=load_model("first.h5")
+    return model
+
+def visualize_dots(part, title, candidates, colors, img):
+    part.set_title(title)
+    part.imshow(plt.imread(img))
+
+    candidates = np.array(candidates)
+    red = colors.count('red')
+    part.plot(candidates[red:, 0], candidates[red:, 1], 'ro', color='g', markersize=2)
+    part.plot(candidates[:red, 0], candidates[:red, 1], 'ro', color='r', markersize=2)
+
+def visualize_distances(part, traffic_light, traffic_lights_3d_location, valid):
+    for i in range(len(traffic_light)):
+        if valid[i]:
+            part.text(traffic_light[i, 0], traffic_light[i, 1],
+                       r'{0:.1f}'.format(traffic_lights_3d_location[i, 2]), color='y')
+
+#========================End of Auxiliary Functions===========================
+
+class TFL_Manager(object):
+
+    def __init__(self, pp, focal):
+        self.principle_point = pp
+        self.focal_length = focal
+        self.prev_frame = None
+        self.curr_frame = None
+        self.model = get_model()
+        self.id_frame = 0
+
+    def run(self, frame, EM):
+        self.curr_frame = FrameContainer(frame)
+        self.curr_frame.EM = EM
+
+        #part 1
+        self.curr_frame.cordinates, self.curr_frame.cordinates_colors = find_tfl_lights(self.curr_frame.img)
+
+        #part 2
+        confirm_tfl_by_CNN(self.curr_frame, self.model)
+
+        # part 3
+        if self.prev_frame:
+            SFM.calc_TFL_dist(self.prev_frame, self.curr_frame, self.focal_length, self.principle_point)
+            # run_sfm(self.curr_frame, self.prev_frame, self.principle_point, self.focal_length)
 
 
-def crop_red(image, coordinate):
-    img = ImageOps.expand(image, border=41, fill='black')
-    im = img.crop((coordinate[0] - 10, coordinate[1] - 10, coordinate[0] + 71, coordinate[1] + 71))
-    im = np.array(im)
-    return im
+    def visualize(self):
 
+        fig, (part1, part2, part3) = plt.subplots(1, 3,figsize=(12,6))
+        fig.suptitle(f'Frame #{self.id_frame}  {self.curr_frame.img}')
 
-def crop_green(image, coordinate):
-    img = ImageOps.expand(image, border=80, fill='black')
-    im = img.crop((coordinate[0] - 40.5, coordinate[1] + 31, coordinate[0] + 40.5, coordinate[1] - 50))
-    im = np.array(im)
-    return im
+        #part 1
+        visualize_dots(part1, "candidates", self.curr_frame.cordinates, self.curr_frame.cordinates_colors, self.curr_frame.img)
 
+        #part 2
+        visualize_dots(part2, "traffic_lights", self.curr_frame.traffic_light, self.curr_frame.colors,self.curr_frame.img)
+        print(self.curr_frame.traffic_light)
+        #part 3
+        if self.prev_frame:
+            visualize_dots(part3, "distance", self.curr_frame.traffic_light, self.curr_frame.colors,self.curr_frame.img)
+            visualize_distances(part3, self.curr_frame.traffic_light, self.curr_frame.traffic_lights_3d_location, self.curr_frame.valid)
 
-def check_red_tfl(model, image: Image, x_red: list, y_red: list) -> tuple:
-    x_red2 = []
-    y_red2 = []
-    for i in range(len(x_red)):
-        tmp_image = crop_red(image, [x_red[i], y_red[i]])
-        if is_tfl(model, tmp_image):
-            x_red2.append(x_red[i])
-            y_red2.append(y_red[i])
-    return x_red2, y_red2
+        plt.show(block=True)
 
-
-def check_green_tfl(model, image: Image, x_green: list, y_green: list) -> tuple:
-    del_list = []
-    x_green2 = []
-    y_green2 = []
-    for i in range(len(x_green)):
-        tmp_image = crop_green(image, [x_green[i], y_green[i]])
-        if is_tfl(model, tmp_image):
-            x_green2.append(x_green[i])
-            y_green2.append(y_green[i])
-            del_list.append(i)
-    return x_green2, y_green2
-
-
-
-
-
-class TFLMan:
-    def __init__(self, pkl, frame_list):
-        self.pkl = pkl
-        self.frame_list = frame_list
-
-    def part_1(self, i: int) -> tuple:
-        image = np.array(Image.open(self.frame_list[i]))
-        self.image = create_image_with_border(Image.open(self.frame_list[i]))
-        x_red, y_red, x_green, y_green = find_tfl_lights(image)
-        # plt.imshow(image)
-        # plt.show()
-        # plt.plot(x_red, y_red, 'ro', color='r', markersize=4)
-        # plt.plot(x_green, y_green, 'ro', color='g', markersize=4)
-        # plt.show()
-        return x_red, y_red, x_green, y_green
-
-    def part_2(self, image, x_red: list, y_red: list, x_green: list, y_green: list) -> tuple:
-        model = get_model()
-        x_red, y_red = check_red_tfl(model, image, x_red, y_red)
-        x_green, y_green = check_green_tfl(model, image, x_green, y_green)
-        # print(x_red, y_red, x_green, y_green)
-        # plt.imshow(image)
-        # plt.show()
-        return x_red, y_red, x_green, y_green
-
-    def part_3(self, curr_id, prev_id, curr_x_red, curr_y_red, curr_x_green, curr_y_green, prev_x_red, prev_y_red,
-               prev_x_green, prev_y_green):
-        run_sfm(curr_id, prev_id, self.frame_list, self.pkl, curr_x_red, curr_y_red, curr_x_green, curr_y_green,
-                prev_x_red, prev_y_red, prev_x_green, prev_y_green)
-
-    def run(self, i: int) -> None:
-        curr_x_red, curr_y_red, curr_x_green, curr_y_green = self.part_1(i)
-        curr_image = Image.open(self.frame_list[i])
-        curr_x_red, curr_y_red, curr_x_green, curr_y_green = self.part_2(curr_image, curr_x_red, curr_y_red,
-                                                                         curr_x_green, curr_y_green)
-        prev_x_red, prev_y_red, prev_x_green, prev_y_green = self.part_1(i - 1)
-        prev_image = Image.open(self.frame_list[i - 1])
-        prev_x_red, prev_y_red, prev_x_green, prev_y_green = self.part_2(prev_image, prev_x_red, prev_y_red,
-                                                                         prev_x_green, prev_y_green)
-        self.part_3(i, i - 1, curr_x_red, curr_y_red, curr_x_green, curr_y_green, prev_x_red, prev_y_red, prev_x_green,
-                    prev_y_green)
+    def end(self):
+        self.prev_frame = self.curr_frame
+        self.id_frame += 1
